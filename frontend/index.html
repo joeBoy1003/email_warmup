@@ -1,192 +1,47 @@
-<!DOCTYPE html>  
-<html lang="en">  
-<head>  
-    <meta charset="UTF-8">  
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">  
-    <link rel="stylesheet" href="styles.css">  
-    <title>Email Warm-Up Tool</title>  
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> <!-- For Analytics Chart -->
-</head>  
-<body>  
-    <main>  
-        <header>  
-            <h1>Email Warm-Up Tool</h1>  
-        </header>  
-
-        <!-- Email Account Section -->
-        <section class="email-setup">  
-            <h2>Add Email Account</h2>  
-            <form id="emailForm">  
-                <label for="email">Email Address:</label>
-                <input type="email" id="email" placeholder="Email Address" required>  
-
-                <label for="provider">Select Provider:</label>
-                <select id="provider" required>  
-                    <option value="" disabled selected>Select Provider</option>  
-                    <option value="gmail">Gmail</option>  
-                    <option value="outlook">Outlook</option>  
-                    <option value="yahoo">Yahoo</option>  
-                    <option value="custom">Custom SMTP</option>  
-                </select>  
-
-                <button type="submit">Add Account</button>  
-            </form>  
-        </section>  
-
-        <!-- Warm-Up Schedule Section -->
-        <section class="warm-up-schedule">  
-            <h2>Set Warm-Up Schedule</h2>  
-            <form id="scheduleForm">  
-                <label for="scheduleEmail">Email Account:</label>
-                <input type="email" id="scheduleEmail" placeholder="Email Address" required>  
-
-                <label for="emailsPerDay">Emails per Day:</label>  
-                <input type="number" id="emailsPerDay" value="6000" min="100" required>  
-
-                <label for="warmupRate">Warm-Up Rate:</label>  
-                <select id="warmupRate" required>  
-                    <option value="" disabled selected>Select Rate</option>
-                    <option value="slow">Slow</option>  
-                    <option value="normal">Normal</option>  
-                    <option value="fast">Fast</option>  
-                </select>  
-
-                <button type="submit">Set Schedule</button>  
-            </form>  
-        </section>  
-
-        <!-- Performance Analytics Section -->
-        <section class="analytics">  
-            <h2>Performance Analytics</h2>  
-            <canvas id="analyticsChart" width="400" height="200"></canvas>  
-        </section>  
-
-        <!-- Account Status Section -->
-        <section class="status">  
-            <h2>Account Status</h2>  
-            <table>  
-                <thead>  
-                    <tr>  
-                        <th>Email Account</th>  
-                        <th>Delivery Rate</th>  
-                        <th>Spam Rate</th>  
-                        <th>Engagement Rate</th>  
-                    </tr>  
-                </thead>  
-                <tbody id="statusTable">  
-                    <!-- Dynamic rows added here -->  
-                </tbody>  
-            </table>  
-        </section>  
-    </main>  
-
-    <script>
-        // Helper function to make API calls
-        async function apiCall(endpoint, method, body = null) {
-            const response = await fetch(`http://127.0.0.1:5000/${endpoint}`, {
-                method,
-                headers: { 'Content-Type': 'application/json' },
-                body: body ? JSON.stringify(body) : null,
-            });
-            return response.json();
-        }
-
-        // Add a row dynamically to the status table
-        function addStatusRow(email, deliveryRate = '100%', spamRate = '0%', engagementRate = '0%') {
-            const tbody = document.getElementById('statusTable');
-            const newRow = document.createElement('tr');
-            newRow.innerHTML = `
-                <td>${email}</td>
-                <td>${deliveryRate}</td>
-                <td>${spamRate}</td>
-                <td>${engagementRate}</td>
-            `;
-            tbody.appendChild(newRow);
-        }
-
-        // Load analytics chart
-        async function loadAnalyticsChart() {
-            const data = await apiCall('analytics', 'GET');
-            const labels = data.map(item => item.email);
-            const deliveryRates = data.map(item => item.delivery_rate);
-            const spamRates = data.map(item => item.spam_rate);
-
-            const ctx = document.getElementById('analyticsChart').getContext('2d');
-            new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: labels,
-                    datasets: [
-                        {
-                            label: 'Delivery Rate (%)',
-                            data: deliveryRates,
-                            backgroundColor: 'rgba(75, 192, 192, 0.6)',
-                        },
-                        {
-                            label: 'Spam Rate (%)',
-                            data: spamRates,
-                            backgroundColor: 'rgba(255, 99, 132, 0.6)',
-                        },
-                    ],
-                },
-                options: {
-                    responsive: true,
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                        },
-                    },
-                },
-            });
-        }
-
-        // Add email account
-        document.getElementById('emailForm').addEventListener('submit', async function (e) {
-            e.preventDefault();
-            const email = document.getElementById('email').value;
-            const provider = document.getElementById('provider').value;
-            const password = prompt('Enter your email password (for SMTP authentication):');
-            const smtpServer = prompt('Enter SMTP server (e.g., smtp.gmail.com):');
-            const port = prompt('Enter SMTP port (e.g., 587):');
-
-            if (!provider || !password || !smtpServer || !port) {
-                alert('All fields are required!');
-                return;
-            }
-
-            const result = await apiCall('add_account', 'POST', { email, provider, password, smtp_server: smtpServer, port });
-            alert(result.message);
-
-            if (result.message.includes('success')) {
-                addStatusRow(email);
-                loadAnalyticsChart(); // Refresh chart
-            }
-        });
-
-        // Set warm-up schedule
-        document.getElementById('scheduleForm').addEventListener('submit', async function (e) {
-            e.preventDefault();
-            const email = document.getElementById('scheduleEmail').value;
-            const emailsPerDay = document.getElementById('emailsPerDay').value;
-            const warmupRate = document.getElementById('warmupRate').value;
-
-            if (!warmupRate) {
-                alert('Please select a valid warm-up rate.');
-                return;
-            }
-
-            const result = await apiCall('set_schedule', 'POST', { email, emails_per_day: emailsPerDay, warmup_rate: warmupRate });
-            alert(result.message);
-        });
-
-        // Load initial analytics and status on page load
-        window.onload = async function () {
-            const data = await apiCall('analytics', 'GET');
-            data.forEach(item => {
-                addStatusRow(item.email, `${item.delivery_rate}%`, `${item.spam_rate}%`, `${item.engagement_rate}%`);
-            });
-            loadAnalyticsChart();
-        };
-    </script>
-</body>  
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="styles.css">
+    <title>Email Warm-Up Tool</title>
+</head>
+<body>
+    <header>
+        <h1>Email Warm-Up Tool</h1>
+    </header>
+    <main>
+        <section>
+            <h2>Add Email Account</h2>
+            <form id="addAccountForm">
+                <input type="email" id="email" placeholder="Email Address" required>
+                <input type="text" id="provider" placeholder="Provider" required>
+                <input type="text" id="smtpServer" placeholder="SMTP Server" required>
+                <input type="number" id="port" placeholder="Port" required>
+                <input type="password" id="password" placeholder="Password" required>
+                <button type="submit">Add Account</button>
+            </form>
+        </section>
+        <section>
+            <h2>Set Warm-Up Schedule</h2>
+            <form id="scheduleForm">
+                <input type="email" id="scheduleEmail" placeholder="Email Address" required>
+                <input type="number" id="dailyLimit" placeholder="Emails per Day" required>
+                <button type="submit">Set Schedule</button>
+            </form>
+        </section>
+        <section>
+            <h2>Upload Recipients</h2>
+            <form id="recipientUploadForm" enctype="multipart/form-data">
+                <input type="file" id="recipientFile" accept=".csv" required>
+                <button type="submit">Upload</button>
+            </form>
+        </section>
+        <section>
+            <h2>Analytics</h2>
+            <ul id="analyticsList"></ul>
+        </section>
+    </main>
+    <script src="app.js"></script>
+</body>
 </html>

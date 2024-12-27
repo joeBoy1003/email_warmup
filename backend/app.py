@@ -1,23 +1,106 @@
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from waitress import serve
+from apscheduler.schedulers.background import BackgroundScheduler
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from apscheduler.schedulers.background import BackgroundScheduler
+import random
 
 app = Flask(__name__)
 CORS(app)
 
-# In-memory storage (replace with a database later)
+# Mock storage
 accounts = []
 analytics = []
+recipient_store = {}  # Store recipients for each email account
 
-# Scheduler for sending emails
 scheduler = BackgroundScheduler()
 scheduler.start()
 
-def send_email(email, password, to_email, subject, body, smtp_server, port):
+# Add an email account
+@app.route('/add_account', methods=['POST'])
+def add_account():
+    data = request.json
+    email = data.get('email')
+    provider = data.get('provider')
+    smtp_server = data.get('smtp_server')
+    port = data.get('port')
+    password = data.get('password')
+
+    if email and provider and smtp_server and port and password:
+        accounts.append({
+            'email': email,
+            'provider': provider,
+            'smtp_server': smtp_server,
+            'port': port,
+            'password': password
+        })
+        analytics.append({'email': email, 'sent': 0, 'spam': 0, 'replies': 0})
+        return jsonify({'message': 'Account added successfully!'}), 201
+    return jsonify({'message': 'Invalid input!'}), 400
+
+# Set warm-up schedule
+@app.route('/set_schedule', methods=['POST'])
+def set_schedule():
+    data = request.json
+    email = data.get('email')
+    daily_limit = data.get('daily_limit')
+
+    account = next((acc for acc in accounts if acc['email'] == email), None)
+    if account:
+        recipient_list = recipient_store.get(email, ["recipient@example.com"])  # Mock recipients if none uploaded
+        schedule_email_sending(account, recipient_list, daily_limit)
+        return jsonify({'message': 'Warm-up schedule started!'}), 200
+    return jsonify({'message': 'Account not found!'}), 404
+
+# Upload recipient list
+@app.route('/recipients/upload', methods=['POST'])
+def upload_recipients():
+    email = request.form.get('email')  # Email account for these recipients
+    file = request.files['file']
+
+    if not file or not email:
+        return jsonify({'message': 'Email and file are required!'}), 400
+
+    recipients = [line.decode('utf-8').strip() for line in file.readlines()]
+    recipient_store[email] = recipients
+    return jsonify({'message': 'Recipients uploaded successfully!'}), 200
+
+# Fetch analytics
+@app.route('/analytics', methods=['GET'])
+def get_analytics():
+    return jsonify(analytics), 200
+
+# Mark emails as "Not Spam"
+@app.route('/engage/not_spam', methods=['POST'])
+def mark_as_not_spam():
+    data = request.json
+    email = data.get('email')
+    print(f"Mock: Marking emails as 'Not Spam' for {email}")
+    return jsonify({'message': f"Marked emails as 'Not Spam' for {email}"}), 200
+
+# Schedule email sending
+def schedule_email_sending(account, recipient_list, daily_limit):
+    interval = 86400 // daily_limit  # Calculate interval (seconds) between emails
+    recipients_to_send = recipient_list[:daily_limit]  # Limit recipients to daily limit
+
+    for recipient in recipients_to_send:
+        scheduler.add_job(
+            send_email,
+            args=(account['smtp_server'], account['port'], account['email'], account['password'], recipient,
+                  "Warm-Up Email", "This is a warm-up email to improve reputation."),
+            trigger="interval",
+            seconds=interval,
+            max_instances=10  # Prevent overlapping jobs
+        )
+
+
+# Send an email
+def send_email(smtp_server, port, email, password, to_email, subject, body):
+    success = False
     try:
+        # Email sending logic (existing code)
         server = smtplib.SMTP(smtp_server, port)
         server.starttls()
         server.login(email, password)
@@ -30,73 +113,31 @@ def send_email(email, password, to_email, subject, body, smtp_server, port):
 
         server.sendmail(email, to_email, message.as_string())
         server.quit()
+
+        success = True
         print(f"Email sent to {to_email}")
-        return True
     except Exception as e:
-        print(f"Failed to send email: {e}")
-        return False
+        print(f"Failed to send email to {to_email}: {e}")
 
-def schedule_emails(email_account, emails_per_day, warmup_rate):
-    # Spread emails evenly over the day
-    interval_seconds = 86400 // emails_per_day
+    # Update analytics
+    for account in analytics:
+        if account['email'] == email:
+            if success:
+                account['sent'] += 1
+            else:
+                account['spam'] += 1
+    return success
 
-    for i in range(emails_per_day):
-        scheduler.add_job(
-            func=send_email,
-            args=(
-                email_account['email'],
-                email_account['password'],
-                "scamp121206@gmail.com",
-                "Warm-Up Email",
-                "This is an automated warm-up email.",
-                email_account['smtp_server'],
-                email_account['port']
-            ),
-            trigger="interval",
-            seconds=interval_seconds,
-            id=f"{email_account['email']}_email_{i}",
-            replace_existing=True
-        )
-
-@app.route('/add_account', methods=['POST'])
-def add_account():
-    data = request.json
-    email = data.get('email')
-    provider = data.get('provider')
-    password = data.get('password')  # Add password field
-    smtp_server = data.get('smtp_server')
-    port = data.get('port')
-
-    if email and provider and password and smtp_server and port:
-        account = {
-            'email': email,
-            'provider': provider,
-            'password': password,
-            'smtp_server': smtp_server,
-            'port': port
-        }
-        accounts.append(account)
-        analytics.append({'email': email, 'delivery_rate': 100, 'spam_rate': 0, 'engagement_rate': 0})
-        return jsonify({'message': 'Account added successfully!'}), 201
-    return jsonify({'message': 'Invalid input!'}), 400
-
-@app.route('/set_schedule', methods=['POST'])
-def set_schedule():
-    data = request.json
-    email = data.get('email')
-    emails_per_day = data.get('emails_per_day')
-    warmup_rate = data.get('warmup_rate')
-
-    email_account = next((acc for acc in accounts if acc['email'] == email), None)
-
-    if email_account and emails_per_day and warmup_rate:
-        schedule_emails(email_account, int(emails_per_day), warmup_rate)
-        return jsonify({'message': 'Warm-up schedule set successfully!'}), 200
-    return jsonify({'message': 'Invalid input or account does not exist!'}), 404
-
-@app.route('/analytics', methods=['GET'])
-def get_analytics():
-    return jsonify(analytics), 200
+# Update analytics
+def update_analytics(email, action):
+    for account in analytics:
+        if account['email'] == email:
+            if action == "sent":
+                account['sent'] += 1
+            elif action == "spam":
+                account['spam'] += 1
+            elif action == "replies":
+                account['replies'] += 1
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    serve(app, host='127.0.0.1', port=5000)
